@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>FamPay Gateway</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'Segoe UI',Arial,sans-serif;background:#0d0d1a;color:#fff;min-height:100vh;display:flex;justify-content:center;align-items:center;padding:20px}
+        .container{background:#1a1a2e;padding:40px;border-radius:20px;max-width:500px;width:100%;border:1px solid #333}
+        h1{color:#00f5d4;text-align:center;margin-bottom:10px}
+        .subtitle{color:#888;text-align:center;margin-bottom:30px;font-size:14px}
+        .form-group{margin-bottom:15px}
+        label{color:#aaa;display:block;margin-bottom:5px;font-size:14px}
+        input{width:100%;padding:12px;background:#0d0d1a;border:1px solid #333;border-radius:10px;color:#fff;font-size:16px;outline:none}
+        input:focus{border-color:#00f5d4}
+        .btn{width:100%;padding:12px;border:none;border-radius:10px;font-size:16px;font-weight:bold;cursor:pointer;transition:0.3s}
+        .btn-primary{background:linear-gradient(135deg,#00f5d4,#00d4a8);color:#0d0d1a}
+        .btn-primary:hover{transform:scale(1.02);box-shadow:0 0 30px rgba(0,245,212,0.3)}
+        .btn-secondary{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff}
+        .btn-secondary:hover{transform:scale(1.02)}
+        .qr-container{text-align:center;margin:20px 0;display:none}
+        .qr-container img{max-width:200px;background:#fff;padding:15px;border-radius:15px}
+        .result{margin-top:15px;padding:15px;border-radius:10px;display:none}
+        .result.success{background:rgba(0,245,212,0.1);border:1px solid #00f5d4;color:#00f5d4}
+        .result.fail{background:rgba(255,60,60,0.1);border:1px solid #ff4444;color:#ff4444}
+        .row{display:flex;gap:10px}
+        .row .btn{width:50%}
+        .status{margin-top:10px;text-align:center;font-size:14px}
+        .status.success{color:#00f5d4}
+        .status.error{color:#ff4444}
+        .status.wait{color:#ffa500}
+        .txn-item{padding:10px;border-bottom:1px solid #333;font-size:13px;color:#888}
+        .txn-item .utr{color:#00f5d4}
+        .txn-item .amount{color:#fff}
+        #transactions{margin-top:20px;display:none}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>💳 FamPay Gateway</h1>
+        <p class="subtitle">Vercel Deploy Ready</p>
+        
+        <div class="form-group">
+            <label>💰 Amount (₹)</label>
+            <input type="number" id="amount" value="25.01" step="0.01">
+        </div>
+        <div class="form-group">
+            <label>🏦 UPI ID</label>
+            <input type="text" id="upiId" value="yuvraj@fam">
+        </div>
+        <div class="form-group">
+            <label>👤 Name</label>
+            <input type="text" id="name" value="Yuvraj Jaiswal">
+        </div>
+        
+        <button class="btn btn-primary" id="generateBtn">📱 Generate QR</button>
+        
+        <div class="qr-container" id="qrContainer">
+            <img id="qrImage" src="" alt="QR Code">
+            <p style="color:#888;font-size:12px;margin-top:10px" id="upiUriDisplay"></p>
+        </div>
+        
+        <hr style="border-color:#333; margin:20px 0;">
+        
+        <div class="row">
+            <button class="btn btn-secondary" id="verifyBtn">🔍 Verify</button>
+            <button class="btn btn-secondary" id="dbVerifyBtn" style="background:linear-gradient(135deg,#f093fb,#f5576c)">📊 DB Verify</button>
+        </div>
+        
+        <div class="status" id="status"></div>
+        <div class="result" id="result"></div>
+        <div id="transactions"><div id="txnList"></div></div>
+    </div>
+    
+    <script>
+        const { hostname } = window.location;
+        const base = `https://${hostname}`;
+        
+        document.getElementById('generateBtn').onclick = async () => {
+            const amt = document.getElementById('amount').value;
+            const upi = document.getElementById('upiId').value;
+            const nm = document.getElementById('name').value;
+            const res = await fetch(`${base}/api/generate-qr?upiId=${upi}&amount=${amt}&name=${encodeURIComponent(nm)}`);
+            const data = await res.json();
+            if(data.success) {
+                document.getElementById('qrImage').src = `data:image/png;base64,${data.qr_image}`;
+                document.getElementById('upiUriDisplay').textContent = `UPI: ${data.upi_uri}`;
+                document.getElementById('qrContainer').style.display = 'block';
+                document.getElementById('status').textContent = '✅ QR generated!';
+                document.getElementById('status').className = 'status success';
+            }
+        };
+        
+        document.getElementById('verifyBtn').onclick = async () => {
+            const amt = document.getElementById('amount').value;
+            document.getElementById('status').textContent = '⏳ Checking...';
+            document.getElementById('status').className = 'status wait';
+            const res = await fetch(`${base}/api/verify-payment?amount=${amt}`);
+            const data = await res.json();
+            const result = document.getElementById('result');
+            result.style.display = 'block';
+            if(data.verified) {
+                result.className = 'result success';
+                result.innerHTML = `✅ ${data.message}<br>UTR: ${data.utr}<br>Sender: ${data.sender_name}`;
+                document.getElementById('status').textContent = '✅ Verified!';
+                document.getElementById('status').className = 'status success';
+            } else {
+                result.className = 'result fail';
+                result.innerHTML = `❌ ${data.message}`;
+                document.getElementById('status').textContent = '❌ Not found';
+                document.getElementById('status').className = 'status error';
+            }
+        };
+        
+        document.getElementById('dbVerifyBtn').onclick = async () => {
+            const amt = document.getElementById('amount').value;
+            const res = await fetch(`${base}/api/verify-with-db?amount=${amt}`);
+            const data = await res.json();
+            const result = document.getElementById('result');
+            result.style.display = 'block';
+            if(data.verified) {
+                result.className = 'result success';
+                result.innerHTML = `✅ ${data.message}<br>UTR: ${data.utr}<br>Sender: ${data.sender_name}<br>Logged: ${data.logged}`;
+                document.getElementById('status').textContent = '✅ Verified & Logged!';
+                document.getElementById('status').className = 'status success';
+                document.getElementById('transactions').style.display = 'block';
+                document.getElementById('txnList').innerHTML += `<div class="txn-item"><span class="utr">UTR: ${data.utr}</span> | <span class="amount">₹${data.amount}</span> | ${data.sender_name}</div>`;
+            } else {
+                result.className = 'result fail';
+                result.innerHTML = `❌ ${data.message}`;
+            }
+        };
+    </script>
+</body>
+</html>
