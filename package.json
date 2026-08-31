@@ -1,0 +1,13 @@
+{
+  "name": "fampay-gateway",
+  "version": "1.0.0",
+  "description": "FamPay Payment Gateway on Vercel",
+  "main": "api/index.js",
+  "scripts": {
+    "start": "node api/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "fampay-verify": "^1.0.0"
+  }
+}
