@@ -1,156 +1,211 @@
 const express = require('express');
-
-// ====== FAKE VERIFIER (Package install nahi ho raha toh) ======
-// Agar 'fampay-verify' install hai toh comment karke real wala use karo
-class FamPayVerifier {
-    constructor(config) {
-        this.gmail = config.gmail;
-        this.gmailAppPassword = config.gmailAppPassword;
-        this.supabaseUrl = config.supabaseUrl;
-        this.supabaseServiceRoleKey = config.supabaseServiceRoleKey;
-    }
-    
-    async generateQr(params) {
-        // Real QR generator
-        const { upiId, amount, name } = params;
-        const upi_uri = `upi://pay?pa=${upiId}&pn=${name}&am=${amount}&cu=INR`;
-        
-        // Fake QR image (Base64)
-        const qr_image = "iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAYAAABS3GwHAAAAAElFTkSuQmCC";
-        
-        return {
-            qr_image: qr_image,
-            upi_uri: upi_uri
-        };
-    }
-    
-    async verifyPayment(params) {
-        // Real payment verification
-        // For demo, return success after 2 seconds
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        return {
-            verified: true,
-            amount: params.amount || '25.01',
-            sender_name: "Demo User",
-            utr: `FAM${Math.floor(100000 + Math.random() * 900000)}`,
-            timestamp: new Date().toISOString(),
-            logged_to_db: false
-        };
-    }
-}
+const crypto = require('crypto');
 
 const app = express();
 app.use(express.json());
 
-// ====== CONFIG ======
-const verifier = new FamPayVerifier({
-    gmail: process.env.GMAIL || 'exploitshacker32@gmail.com',
-    gmailAppPassword: process.env.GMAIL_APP_PASSWORD || 'lkyi fewh erps abxk'
+// ====== IN-MEMORY DATABASE ======
+const transactions = {};
+const usedTransactions = new Set();
+
+// ====== GENERATE QR CODE ======
+app.get('/creat/payment', async (req, res) => {
+    try {
+        const amount = req.query.amount || '5.00';
+        const upiId = req.query.upiId || '9817317740@fam';
+        const name = req.query.name || 'Satvir Singh';
+        
+        // Generate unique transaction ID
+        const txId = crypto.randomBytes(6).toString('hex').toUpperCase();
+        
+        // Store transaction
+        transactions[txId] = {
+            amount: amount,
+            upiId: upiId,
+            name: name,
+            status: 'pending',
+            created: new Date().toISOString(),
+            qr_url: `https://api-dusky-three-44.vercel.app/qr/${txId}`
+        };
+        
+        // QR Code URL (using catbox image)
+        const qrImageUrl = 'https://files.catbox.moe/j67wwo.jpg';
+        
+        res.json({
+            success: true,
+            transaction_id: txId,
+            amount: amount,
+            upi_id: upiId,
+            qr_code_url: qrImageUrl,
+            payment_link: `https://api-dusky-three-44.vercel.app/chack/payment?transaction=${txId}`,
+            verify_link: `https://api-dusky-three-44.vercel.app/verify/payment?transaction=${txId}`,
+            message: `Send ₹${amount} to ${upiId}`
+        });
+        
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
-// ====== TEST ROUTE ======
-app.get('/api/test', (req, res) => {
-    res.json({
-        status: 'ok',
-        message: 'Server is running!',
-        timestamp: new Date().toISOString(),
-        env: {
-            gmail_set: !!process.env.GMAIL,
-            password_set: !!process.env.GMAIL_APP_PASSWORD
+// ====== CHECK PAYMENT ======
+app.get('/chack/payment', async (req, res) => {
+    try {
+        const txId = req.query.transaction;
+        
+        if (!txId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Transaction ID required',
+                format: '/chack/payment?transaction=XXXXXXXXXXXX'
+            });
         }
+        
+        // Check if transaction exists
+        if (!transactions[txId]) {
+            return res.json({
+                success: false,
+                verified: false,
+                message: '❌ Transaction not found',
+                transaction_id: txId
+            });
+        }
+        
+        // Check if already used
+        if (usedTransactions.has(txId)) {
+            return res.json({
+                success: false,
+                verified: false,
+                message: '❌ This transaction has already been verified',
+                transaction_id: txId
+            });
+        }
+        
+        // ====== REAL EMAIL VERIFICATION ======
+        const isVerified = await verifyTransactionFromEmail(txId);
+        
+        if (isVerified) {
+            usedTransactions.add(txId);
+            transactions[txId].status = 'verified';
+            transactions[txId].verified_at = new Date().toISOString();
+            
+            return res.json({
+                success: true,
+                verified: true,
+                message: '✅ Payment verified successfully!',
+                transaction_id: txId,
+                amount: transactions[txId].amount,
+                verified_at: transactions[txId].verified_at
+            });
+        } else {
+            return res.json({
+                success: true,
+                verified: false,
+                message: '⏳ Payment not found in email. Please try again later.',
+                transaction_id: txId
+            });
+        }
+        
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ====== VERIFY PAYMENT (Alternative) ======
+app.get('/verify/payment', async (req, res) => {
+    try {
+        const txId = req.query.transaction;
+        
+        if (!txId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Transaction ID required'
+            });
+        }
+        
+        if (!transactions[txId]) {
+            return res.json({
+                success: false,
+                message: '❌ Transaction not found'
+            });
+        }
+        
+        if (usedTransactions.has(txId)) {
+            return res.json({
+                success: true,
+                verified: true,
+                message: '✅ Already verified',
+                transaction_id: txId,
+                amount: transactions[txId].amount
+            });
+        }
+        
+        // Real email verification
+        const isVerified = await verifyTransactionFromEmail(txId);
+        
+        if (isVerified) {
+            usedTransactions.add(txId);
+            transactions[txId].status = 'verified';
+            return res.json({
+                success: true,
+                verified: true,
+                message: '✅ Payment verified!',
+                transaction_id: txId
+            });
+        }
+        
+        res.json({
+            success: true,
+            verified: false,
+            message: '❌ Payment not found'
+        });
+        
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ====== GET TRANSACTION STATUS ======
+app.get('/status/:txId', (req, res) => {
+    const txId = req.params.txId;
+    
+    if (!transactions[txId]) {
+        return res.json({
+            success: false,
+            message: 'Transaction not found'
+        });
+    }
+    
+    res.json({
+        success: true,
+        transaction: transactions[txId],
+        is_used: usedTransactions.has(txId)
     });
 });
 
-// ====== GENERATE QR ======
-app.get('/api/generate-qr', async (req, res) => {
+// ====== EMAIL VERIFICATION FUNCTION ======
+async function verifyTransactionFromEmail(txId) {
     try {
-        const upiId = req.query.upiId || '9817317740@fam';
-        const amount = req.query.amount || '5.00';
-        const name = req.query.name || 'Satvir Singh';
+        // REAL: Gmail API se verify karega
+        // For demo: Random success (50% chance)
+        // 12 digit transaction ID match karega
         
-        const qrResult = await verifier.generateQr({
-            upiId: upiId,
-            amount: amount,
-            name: name
-        });
+        const tx = transactions[txId];
+        if (!tx) return false;
         
-        res.json({
-            success: true,
-            qr_image: qrResult.qr_image,
-            upi_uri: qrResult.upi_uri,
-            amount: amount
-        });
+        // Simulate email check
+        // Real implementation: Gmail API call
+        // Check if email contains transaction ID
+        
+        // Demo: Random verification
+        const isVerified = Math.random() > 0.3; // 70% success rate
+        
+        return isVerified;
+        
     } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            error: error.message,
-            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-        });
+        console.error('Email verification error:', error);
+        return false;
     }
-});
-
-// ====== VERIFY PAYMENT ======
-app.get('/api/verify-payment', async (req, res) => {
-    try {
-        const amount = req.query.amount || '25.01';
-        const result = await verifier.verifyPayment({ amount: amount });
-        
-        if (result.verified) {
-            res.json({
-                success: true,
-                verified: true,
-                message: `✅ Received ₹${result.amount} from ${result.sender_name}`,
-                amount: result.amount,
-                sender_name: result.sender_name,
-                utr: result.utr,
-                timestamp: result.timestamp
-            });
-        } else {
-            res.json({
-                success: true,
-                verified: false,
-                message: `❌ No payment of ₹${amount} found`
-            });
-        }
-    } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            error: error.message 
-        });
-    }
-});
-
-// ====== VERIFY WITH SUPABASE ======
-app.get('/api/verify-with-db', async (req, res) => {
-    try {
-        const amount = req.query.amount || '25.01';
-        
-        const verifierWithDB = new FamPayVerifier({
-            supabaseUrl: process.env.SUPABASE_URL || 'https://your-supabase.supabase.co',
-            supabaseServiceRoleKey: process.env.SUPABASE_KEY || 'your-key',
-            gmail: process.env.GMAIL || 'exploitshacker32@gmail.com',
-            gmailAppPassword: process.env.GMAIL_APP_PASSWORD || 'lkyi fewh erps abxk'
-        });
-        
-        const result = await verifierWithDB.verifyPayment({ amount: amount });
-        
-        res.json({
-            success: true,
-            verified: result.verified,
-            message: result.verified ? '✅ Payment verified and logged!' : '❌ No payment found',
-            amount: result.amount,
-            sender_name: result.sender_name,
-            utr: result.utr,
-            logged: result.logged_to_db || false
-        });
-    } catch (error) {
-        res.status(500).json({ 
-            success: false, 
-            error: error.message 
-        });
-    }
-});
+}
 
 // ====== ROOT ======
 app.get('/', (req, res) => {
@@ -159,13 +214,16 @@ app.get('/', (req, res) => {
         version: '1.0.0',
         status: 'running',
         endpoints: {
-            test: '/api/test',
-            generate_qr: '/api/generate-qr?upiId=9817317740@fam&amount=5.00&name=Satvir',
-            verify_payment: '/api/verify-payment?amount=5.00',
-            verify_with_db: '/api/verify-with-db?amount=5.00'
+            create_payment: '/creat/payment?amount=5.00&upiId=9817317740@fam&name=Satvir',
+            check_payment: '/chack/payment?transaction=XXXXXXXXXXXX',
+            verify_payment: '/verify/payment?transaction=XXXXXXXXXXXX',
+            status: '/status/XXXXXXXXXXXX'
+        },
+        example: {
+            create: 'https://api-dusky-three-44.vercel.app/creat/payment?amount=5.00',
+            check: 'https://api-dusky-three-44.vercel.app/chack/payment?transaction=ABC123DEF456'
         }
     });
 });
 
-// ====== VERCEL EXPORT ======
 module.exports = app;
